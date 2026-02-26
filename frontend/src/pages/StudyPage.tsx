@@ -103,7 +103,7 @@ const StudyPage = () => {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => { localStorage.removeItem("askynotes_user"); navigate("/login"); }}
+            onClick={() => { localStorage.removeItem("askynotes_user"); localStorage.removeItem("askynotes_token"); localStorage.removeItem("askynotes_subjects"); navigate("/login"); }}
             className="text-muted-foreground hover:text-foreground"
           >
             <LogOut className="w-4 h-4" />

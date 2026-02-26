@@ -27,6 +27,8 @@ const Login = () => {
       if (!token) throw new Error("Missing access token");
       // fetch current user
       const user = await getJSON("/auth/me", token);
+      // clear old subject data before setting new user session
+      localStorage.removeItem("askynotes_subjects");
       localStorage.setItem("askynotes_token", token);
       localStorage.setItem("askynotes_user", JSON.stringify(user));
       toast({ title: "Welcome back!" });

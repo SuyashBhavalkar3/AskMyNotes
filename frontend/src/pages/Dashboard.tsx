@@ -74,6 +74,8 @@ const Dashboard = () => {
 
   const handleLogout = () => {
     localStorage.removeItem("askynotes_user");
+    localStorage.removeItem("askynotes_token");
+    localStorage.removeItem("askynotes_subjects");
     navigate("/login");
   };
 

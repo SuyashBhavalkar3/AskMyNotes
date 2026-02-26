@@ -24,6 +24,8 @@ const Register = () => {
     }
     try {
       const data = await postJSON("/auth/register", { name, email, password });
+      // clear any old subject data before new user account
+      localStorage.removeItem("askynotes_subjects");
       // registration returns user info; redirect to login
       toast({ title: "Account created! Please sign in." });
       navigate("/login");
