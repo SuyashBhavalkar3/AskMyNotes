@@ -1,1 +1,5 @@
 neossis_env
+# Database files
+*.db
+noessis.db
+backend/noessis.db
