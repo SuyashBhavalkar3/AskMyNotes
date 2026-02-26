@@ -13,6 +13,7 @@ import os
 import uuid
 from pathlib import Path
 from typing import List
+import logging
 
 from fastapi import UploadFile
 from sqlalchemy.orm import Session
@@ -50,6 +51,8 @@ class DocService:
         volume of documents grows.
         """
 
+        logger = logging.getLogger(__name__)
+
         # validate
         DocService._validate_subject(user_id, subject, db)
 
@@ -77,9 +80,13 @@ class DocService:
         overlap = int(os.getenv("CHUNK_OVERLAP", "200"))
         chunks = chunker.chunk_text(full_text, chunk_size, overlap)
 
+        logger.info(f"Extracted {len(chunks)} chunks from '{file.filename}' for user_id={user_id}, subject='{subject}'")
+
         # generate embeddings using the configured provider (OpenAI by default)
         # every vector should be `EMBEDDING_DIM` long (1536)
         vectors = embeddings.embed_texts(chunks)
+        if vectors:
+            logger.info(f"Generated {len(vectors)} embeddings with dimension {len(vectors[0])}")
 
         # prepare payloads for Qdrant
         payloads: List[dict] = []
@@ -97,6 +104,8 @@ class DocService:
 
         # store vectors in Qdrant
         qdrant_client.upsert(vectors=vectors, payloads=payloads)
+
+        logger.info(f"Upserted {len(payloads)} vectors to Qdrant for document '{file.filename}'")
 
         # update document row with chunk count
         doc.total_chunks = len(chunks)
@@ -116,6 +125,8 @@ class DocService:
         router can simply return the object directly.
         """
 
+        logger = logging.getLogger(__name__)
+
         # verify the subject
         DocService._validate_subject(user_id, subject, db)
 
@@ -129,7 +140,11 @@ class DocService:
 
         # get vector for the question
         question_vec = embeddings.embed_text(question)
+        logger.info(f"Generated embedding for question '{question}' with dimension {len(question_vec)}")
+        
         top_k = top_k or int(os.getenv("TOP_K", "5"))
+
+        logger.info(f"Searching Qdrant with user_id={user_id}, subject='{subject}', top_k={top_k}")
 
         # perform the vector search with strict filters; the Qdrant client
         # ensures that only chunks belonging to the specific user and subject
@@ -138,10 +153,13 @@ class DocService:
             embedding=question_vec, user_id=user_id, subject=subject, top_k=top_k
         )
 
+        logger.info(f"Qdrant returned {len(results)} results for the query")
+
         # no matches means we can't sensibly call an LLM; return a clear
         # message and an empty sources list.  This satisfies the requirement
         # to handle empty search results gracefully.
         if not results:
+            logger.warning(f"No results found for user_id={user_id}, subject='{subject}', question='{question}'")
             return QueryResponse(
                 answer="No relevant information found for your question.",
                 sources=[],

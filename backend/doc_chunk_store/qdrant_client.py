@@ -17,6 +17,7 @@ This file is SAFE for:
 import os
 import uuid
 from typing import List, Optional
+import logging
 
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
@@ -30,6 +31,8 @@ from httpx import ConnectError
 
 # Load environment variables early (CRITICAL)
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 class QdrantClientWrapper:
@@ -51,7 +54,7 @@ class QdrantClientWrapper:
         self.client = QdrantClient(
             url=self.url,
             api_key=self.api_key,
-            timeout=30,
+            timeout=90,
         )
 
         self._collection_initialized = False
@@ -67,6 +70,10 @@ class QdrantClientWrapper:
         once initialization has completed. Connection failures are
         translated into RuntimeError so callers can decide how to react
         (retry, abort startup, etc.).
+        
+        IMPORTANT: This method does NOT delete existing collections. It only
+        creates the collection if it doesn't exist, and adds indices as needed.
+        Your uploaded documents are preserved across application restarts.
         """
         if self._collection_initialized:
             return
@@ -82,43 +89,42 @@ class QdrantClientWrapper:
         except Exception as e:
             raise RuntimeError(f"Failed to retrieve collections from Qdrant: {e}")
 
-        # if collection exists, delete it and recreate to ensure indices are set up
-        if self.collection_name in existing_names:
+        # only create if it doesn't exist; preserves existing data
+        if self.collection_name not in existing_names:
             try:
-                self.client.delete_collection(collection_name=self.collection_name)
+                logger.info(f"Creating new collection '{self.collection_name}'")
+                self.client.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config={
+                        "size": vector_size,
+                        "distance": self.distance,
+                    },
+                )
+                # Create indices on filter fields so Qdrant can optimize
+                # queries that filter by user_id and subject
+                self.client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="user_id",
+                    field_schema="integer",
+                )
+                self.client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="subject",
+                    field_schema="keyword",
+                )
+                logger.info(f"Created indices on user_id and subject")
+            except ConnectError as e:
+                raise RuntimeError(f"Unable to create collection in Qdrant: {e}")
             except Exception as e:
                 raise RuntimeError(
-                    f"Failed to delete existing Qdrant collection '{self.collection_name}': {e}"
+                    f"Failed to create Qdrant collection '{self.collection_name}': {e}"
                 )
-
-        try:
-            self.client.create_collection(
-                collection_name=self.collection_name,
-                vectors_config={
-                    "size": vector_size,
-                    "distance": self.distance,
-                },
-            )
-            # Create indices on filter fields so Qdrant can optimize
-            # queries that filter by user_id and subject
-            self.client.create_payload_index(
-                collection_name=self.collection_name,
-                field_name="user_id",
-                field_schema="integer",
-            )
-            self.client.create_payload_index(
-                collection_name=self.collection_name,
-                field_name="subject",
-                field_schema="keyword",
-            )
-        except ConnectError as e:
-            raise RuntimeError(f"Unable to create collection in Qdrant: {e}")
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to create Qdrant collection '{self.collection_name}': {e}"
-            )
+        else:
+            logger.info(f"Collection '{self.collection_name}' already exists; preserving data")
 
         self._collection_initialized = True
+        stats = self.get_collection_stats()
+        logger.info(f"Collection '{self.collection_name}' initialized. Stats: {stats}")
 
     # ------------------------------------------------------------------
     # Upsert vectors
@@ -131,6 +137,11 @@ class QdrantClientWrapper:
     ) -> None:
         if not vectors:
             return
+
+        # auto-initialize if not yet done (safety measure for reload scenarios)
+        if not self._collection_initialized:
+            logger.warning("Collection not initialized; calling ensure_collection now")
+            self.ensure_collection(vector_size=1536)
 
         if not self._collection_initialized:
             raise RuntimeError(
@@ -154,10 +165,15 @@ class QdrantClientWrapper:
             )
 
         try:
+            logger.info(f"Upserting {len(points)} points to collection '{self.collection_name}'")
+            if points:
+                first_payload = points[0].payload
+                logger.debug(f"Sample payload: user_id={first_payload.get('user_id')}, subject={first_payload.get('subject')}, document_name={first_payload.get('document_name')}")
             self.client.upsert(
                 collection_name=self.collection_name,
                 points=points,
             )
+            logger.info(f"Successfully upserted {len(points)} points")
         except ConnectError as e:
             raise RuntimeError(
                 f"Failed to upsert vectors to Qdrant (connection error): {e}"
@@ -177,6 +193,11 @@ class QdrantClientWrapper:
         subject: str,
         top_k: int = 5,
     ):
+        # auto-initialize if not yet done (safety measure for reload scenarios)
+        if not self._collection_initialized:
+            logger.warning("Collection not initialized; calling ensure_collection now")
+            self.ensure_collection(vector_size=1536)
+
         # Enforce that user_id is always provided; this is critical for
         # security and strict per-user isolation. Do not allow unauthenticated
         # or cross-user queries to reach the vector store.
@@ -196,13 +217,17 @@ class QdrantClientWrapper:
             ]
         )
 
+        logger.info(f"Searching collection '{self.collection_name}' with filter: user_id={user_id}, subject='{subject}'")
+
         try:
-            return self.client.query_points(
+            results = self.client.query_points(
                 collection_name=self.collection_name,
                 query=embedding,
                 query_filter=query_filter,
                 limit=top_k,
             ).points
+            logger.info(f"Search returned {len(results)} points")
+            return results
         except ConnectError as e:
             raise RuntimeError(
                 f"Search failed: Qdrant is unreachable ({e})"
@@ -211,6 +236,18 @@ class QdrantClientWrapper:
             raise RuntimeError(
                 f"Search failed in Qdrant: {e}"
             )
+
+    def get_collection_stats(self) -> dict:
+        """Return metadata about the collection for debugging."""
+        try:
+            collection_info = self.client.get_collection(collection_name=self.collection_name)
+            return {
+                "points_count": collection_info.points_count,
+                "vectors_count": getattr(collection_info, "vectors_count", "N/A"),
+            }
+        except Exception as e:
+            logger.error(f"Failed to get collection stats: {e}")
+            return {}
 
 
 # ----------------------------------------------------------------------
