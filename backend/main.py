@@ -9,7 +9,10 @@ from database import init_db
 # Import authentication router
 from authentication.routes import router as auth_router
 
-# Initialize database tables
+# Import profile router (models imported via routes)
+from profile import router as profile_router
+
+# Initialize database tables (after routers are imported so their models are registered)
 init_db()
 
 # Create FastAPI app
@@ -28,8 +31,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include authentication router
+# Include routers
 app.include_router(auth_router)
+app.include_router(profile_router)
 
 
 @app.get("/", tags=["health"])
