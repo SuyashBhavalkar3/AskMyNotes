@@ -3,3 +3,5 @@ neossis_env
 *.db
 noessis.db
 backend/noessis.db
+# document uploads
+uploaded_docs
