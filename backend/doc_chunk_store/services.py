@@ -23,6 +23,7 @@ from . import chunker, embeddings
 from .utils import save_upload_file, extract_text_from_pdf, UPLOAD_DIR
 from .qdrant_client import qdrant_client
 from .schemas import Source, QueryResponse
+from .llm import LLMService
 
 
 class DocService:
@@ -130,12 +131,28 @@ class DocService:
         question_vec = embeddings.embed_text(question)
         top_k = top_k or int(os.getenv("TOP_K", "5"))
 
+        # perform the vector search with strict filters; the Qdrant client
+        # ensures that only chunks belonging to the specific user and subject
+        # are considered.  There is no additional client-side filtering.
         results = qdrant_client.search(
             embedding=question_vec, user_id=user_id, subject=subject, top_k=top_k
         )
 
+        # no matches means we can't sensibly call an LLM; return a clear
+        # message and an empty sources list.  This satisfies the requirement
+        # to handle empty search results gracefully.
+        if not results:
+            return QueryResponse(
+                answer="No relevant information found for your question.",
+                sources=[],
+            )
+
         sources: List[Source] = []
         contexts: List[str] = []
+
+        # build the context string which will be fed to the LLM.  each chunk
+        # is prefixed with its document name and index so the model (and any
+        # downstream logs) can trace the origin of the text.
         for point in results:
             payload = point.payload
             sources.append(
@@ -145,21 +162,24 @@ class DocService:
                     chunk_text=payload.get("chunk_text"),
                 )
             )
-            contexts.append(payload.get("chunk_text"))
+            contexts.append(
+                f"Document: {payload.get('document_name')}\n"
+                f"Chunk {payload.get('chunk_index')}:\n"
+                f"{payload.get('chunk_text')}"
+            )
 
         context_text = "\n\n".join(contexts)
-        answer = DocService._mock_llm_answer(question, context_text)
+
+        # call out to the LLM service to generate a final answer.  the
+        # service itself is responsible for ensuring the model only sees the
+        # supplied context and for obeying our "no hallucination" instruction.
+        try:
+            answer = LLMService.answer_question(question, context_text)
+        except Exception as e:  # pragma: no cover - provider/network failures
+            # wrap any lower‑level error so the router can decide how to
+            # translate it to an HTTP response.  LLM problems are considered
+            # server‑side issues rather than bad user input.
+            raise ValueError(f"LLM error: {e}")
 
         return QueryResponse(answer=answer, sources=sources)
 
-    @staticmethod
-    def _mock_llm_answer(question: str, context: str) -> str:
-        """Placeholder for an actual LLM invocation.
-
-        Currently it simply returns a formatted string mentioning the size of
-        the provided context.  Replace this with a real LLM call in production.
-        """
-        return (
-            f"Mock answer to '{question}'. "
-            f"Context length was {len(context)} characters."
-        )

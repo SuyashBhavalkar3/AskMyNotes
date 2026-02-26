@@ -36,6 +36,43 @@ app for real embeddings. You can verify which provider/model is active by
 watching the application log during startup; the server logs an informative
 message once it finishes booting.
 
+### Document storage and retrieval
+
+- `POST /doc/upload` – upload a PDF file along with a subject name. The
+  server splits the document into chunks, generates embeddings, and stores
+  both the text and vectors in a Qdrant collection. Each chunk is tagged with
+  the uploading user's ID and the associated subject; per-user isolation is
+  enforced at query time.
+
+- `POST /doc/query` – retrieve an answer to a question using only your own
+  documents.  Example payload:
+  ```json
+  {
+      "subject": "Mathematics",
+      "question": "What is the Pythagorean theorem?",
+      "top_k": 5
+  }
+  ```
+
+  The service performs the following RAG flow (the underlying LLM can be
+configured with the ``LLM_MODEL`` environment variable; it defaults to
+``gpt-3.5-turbo``):
+  1. Generate an embedding for the question using the same provider as during
+     upload.
+  2. Search Qdrant for the top-k chunks that match the vector, filtering by
+     both `user_id` and `subject` so that other users' data is never
+     considered.
+  3. Build a context string from the retrieved chunks (including document
+     name and chunk index) and send it, along with the original question, to
+     a language model.
+  4. The model is instructed to answer *only* from the provided context and
+     to reply with "I don't know" if the information isn't present.  The raw
+     model call is encapsulated in the `doc_chunk_store.llm` module so the
+     router remains thin.
+
+  The HTTP response contains the final `answer` string produced by the LLM
+  and a `sources` list showing which document chunks were used.
+
 > **Note:** The document ingestion endpoints depend on a reachable Qdrant
 > vector database. You can either:
 > 

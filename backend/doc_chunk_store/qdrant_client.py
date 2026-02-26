@@ -82,21 +82,41 @@ class QdrantClientWrapper:
         except Exception as e:
             raise RuntimeError(f"Failed to retrieve collections from Qdrant: {e}")
 
-        if self.collection_name not in existing_names:
+        # if collection exists, delete it and recreate to ensure indices are set up
+        if self.collection_name in existing_names:
             try:
-                self.client.create_collection(
-                    collection_name=self.collection_name,
-                    vectors_config={
-                        "size": vector_size,
-                        "distance": self.distance,
-                    },
-                )
-            except ConnectError as e:
-                raise RuntimeError(f"Unable to create collection in Qdrant: {e}")
+                self.client.delete_collection(collection_name=self.collection_name)
             except Exception as e:
                 raise RuntimeError(
-                    f"Failed to create Qdrant collection '{self.collection_name}': {e}"
+                    f"Failed to delete existing Qdrant collection '{self.collection_name}': {e}"
                 )
+
+        try:
+            self.client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config={
+                    "size": vector_size,
+                    "distance": self.distance,
+                },
+            )
+            # Create indices on filter fields so Qdrant can optimize
+            # queries that filter by user_id and subject
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="user_id",
+                field_schema="integer",
+            )
+            self.client.create_payload_index(
+                collection_name=self.collection_name,
+                field_name="subject",
+                field_schema="keyword",
+            )
+        except ConnectError as e:
+            raise RuntimeError(f"Unable to create collection in Qdrant: {e}")
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to create Qdrant collection '{self.collection_name}': {e}"
+            )
 
         self._collection_initialized = True
 
@@ -177,12 +197,12 @@ class QdrantClientWrapper:
         )
 
         try:
-            return self.client.search(
+            return self.client.query_points(
                 collection_name=self.collection_name,
-                query_vector=embedding,
+                query=embedding,
                 query_filter=query_filter,
                 limit=top_k,
-            )
+            ).points
         except ConnectError as e:
             raise RuntimeError(
                 f"Search failed: Qdrant is unreachable ({e})"

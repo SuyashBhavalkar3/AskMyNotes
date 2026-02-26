@@ -62,6 +62,7 @@ async def query_documents(
         )
     except ValueError as exc:
         msg = str(exc)
-        if "Qdrant" in msg or "unreachable" in msg:
+        # translate backend issues into appropriate HTTP codes
+        if "Qdrant" in msg or "unreachable" in msg or "LLM" in msg:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=msg)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=msg)

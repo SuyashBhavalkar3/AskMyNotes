@@ -9,3 +9,4 @@ python-multipart
 qdrant-client
 PyPDF2
 openai
+pytest
