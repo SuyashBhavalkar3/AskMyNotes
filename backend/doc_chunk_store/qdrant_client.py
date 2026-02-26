@@ -60,20 +60,27 @@ class QdrantClientWrapper:
     # Collection lifecycle
     # ------------------------------------------------------------------
     def ensure_collection(self, vector_size: int) -> None:
-        """
-        Ensure the collection exists.
-        This should be called ONCE at app startup.
+        """Ensure the collection exists and is configured with the
+        correct vector dimensionality.
+
+        This method is safe to call multiple times; it will return early
+        once initialization has completed. Connection failures are
+        translated into RuntimeError so callers can decide how to react
+        (retry, abort startup, etc.).
         """
         if self._collection_initialized:
             return
 
+        if vector_size <= 0:
+            raise ValueError("vector_size must be a positive integer")
+
         try:
             collections = self.client.get_collections().collections
             existing_names = {c.name for c in collections}
+        except ConnectError as e:
+            raise RuntimeError(f"Unable to connect to Qdrant at {self.url}: {e}")
         except Exception as e:
-            raise RuntimeError(
-                f"Unable to connect to Qdrant at {self.url}: {e}"
-            )
+            raise RuntimeError(f"Failed to retrieve collections from Qdrant: {e}")
 
         if self.collection_name not in existing_names:
             try:
@@ -84,6 +91,8 @@ class QdrantClientWrapper:
                         "distance": self.distance,
                     },
                 )
+            except ConnectError as e:
+                raise RuntimeError(f"Unable to create collection in Qdrant: {e}")
             except Exception as e:
                 raise RuntimeError(
                     f"Failed to create Qdrant collection '{self.collection_name}': {e}"
@@ -148,6 +157,12 @@ class QdrantClientWrapper:
         subject: str,
         top_k: int = 5,
     ):
+        # Enforce that user_id is always provided; this is critical for
+        # security and strict per-user isolation. Do not allow unauthenticated
+        # or cross-user queries to reach the vector store.
+        if user_id is None:
+            raise RuntimeError("user_id is required for Qdrant searches to enforce per-user isolation")
+
         query_filter = Filter(
             must=[
                 FieldCondition(

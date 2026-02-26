@@ -76,8 +76,9 @@ class DocService:
         overlap = int(os.getenv("CHUNK_OVERLAP", "200"))
         chunks = chunker.chunk_text(full_text, chunk_size, overlap)
 
-        # generate embeddings
-        vectors = embeddings.get_embeddings(chunks)
+        # generate embeddings using the configured provider (OpenAI by default)
+        # every vector should be `EMBEDDING_DIM` long (1536)
+        vectors = embeddings.embed_texts(chunks)
 
         # prepare payloads for Qdrant
         payloads: List[dict] = []
@@ -117,8 +118,16 @@ class DocService:
         # verify the subject
         DocService._validate_subject(user_id, subject, db)
 
+        # SECURITY: require a concrete user_id for all searches. This
+        # guarantees server-side, Qdrant-enforced isolation so a user can
+        # never retrieve chunks uploaded by another user. Do not remove
+        # or bypass this check — it is a core security property of the
+        # system and must live in the service layer (not the router).
+        if not user_id:
+            raise ValueError("user_id is required for queries to enforce per-user isolation")
+
         # get vector for the question
-        question_vec = embeddings.get_embedding(question)
+        question_vec = embeddings.embed_text(question)
         top_k = top_k or int(os.getenv("TOP_K", "5"))
 
         results = qdrant_client.search(
