@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { postJSON, getJSON } from "@/lib/api";
 
 const Login = () => {
   const [email, setEmail] = useState("");
@@ -14,16 +15,25 @@ const Login = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
       toast({ title: "Please fill all fields", variant: "destructive" });
       return;
     }
-    // Store user in localStorage for demo
-    localStorage.setItem("askmynotes_user", JSON.stringify({ email }));
-    toast({ title: "Welcome back!" });
-    navigate("/dashboard");
+    try {
+      const tokenResp = await postJSON("/auth/login", { email, password });
+      const token = tokenResp?.access_token;
+      if (!token) throw new Error("Missing access token");
+      // fetch current user
+      const user = await getJSON("/auth/me", token);
+      localStorage.setItem("askynotes_token", token);
+      localStorage.setItem("askynotes_user", JSON.stringify(user));
+      toast({ title: "Welcome back!" });
+      navigate("/dashboard");
+    } catch (err: any) {
+      toast({ title: err.message || "Login failed", variant: "destructive" });
+    }
   };
 
   return (
@@ -39,7 +49,7 @@ const Login = () => {
             <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center glow-primary">
               <BookOpen className="w-5 h-5 text-primary" />
             </div>
-            <h1 className="text-2xl font-display font-bold gradient-text">AskMyNotes</h1>
+            <h1 className="text-2xl font-display font-bold text-primary">AskMyNotes</h1>
           </div>
           <p className="text-muted-foreground">Sign in to your study copilot</p>
         </div>

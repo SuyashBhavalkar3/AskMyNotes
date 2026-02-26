@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Bot, User, FileText, AlertCircle } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { Send, Bot, User, FileText, AlertCircle, Mic, MicOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { postJSON } from "@/lib/api";
 
 interface Message {
   id: string;
@@ -24,53 +26,159 @@ const confidenceColors = {
 };
 
 const ChatInterface = ({ subjectName, fileNames }: ChatInterfaceProps) => {
+  const { toast } = useToast();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
   const endRef = useRef<HTMLDivElement>(null);
+  const [continuous, setContinuous] = useState(false);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const simulateResponse = (question: string): Message => {
-    // Demo response - in production this would call the AI backend
-    const hasInfo = Math.random() > 0.2;
-    if (!hasInfo) {
-      return {
-        id: Date.now().toString(),
-        role: "assistant",
-        content: `Not found in your notes for ${subjectName}.`,
-      };
-    }
-    return {
-      id: Date.now().toString(),
-      role: "assistant",
-      content: `Based on your ${subjectName} notes, here's what I found about "${question}":\n\nThis topic is covered in your uploaded materials. The key concepts include the fundamental principles and their applications in practical scenarios. The notes explain the theoretical framework and provide examples for better understanding.`,
-      citations: [
-        { file: fileNames[0] || "notes.pdf", section: "Page 3, Section 2.1" },
-        { file: fileNames[Math.min(1, fileNames.length - 1)] || "notes.pdf", section: "Page 7, Paragraph 4" },
-      ],
-      confidence: (["High", "Medium", "Low"] as const)[Math.floor(Math.random() * 3)],
-      evidence: [
-        `"The fundamental concept of this topic relates to..." — ${fileNames[0] || "notes.pdf"}`,
-        `"In practical applications, we observe that..." — ${fileNames[Math.min(1, fileNames.length - 1)] || "notes.pdf"}`,
-      ],
-    };
+  // helper to call backend query endpoint
+const queryBackend = async (
+  subject: string,
+  question: string
+): Promise<Partial<Message> & { content: string }> => {
+  const token = localStorage.getItem("askynotes_token");
+  if (!token) {
+    throw new Error("Not authenticated");
+  }
+  const res = await postJSON("/doc/query", { subject, question, top_k: 5 }, token);
+  // expected { answer, sources: [...], ... }
+  // convert into Message structure
+  return {
+    content: res.answer || "",
+    citations: res.sources?.map((s: any) => ({ file: s.document_name, section: s.chunk_text || "" })),
+    // backend doesn't return confidence/evidence; fake
+    confidence: "High",
+    evidence: [],
   };
+};
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!input.trim() || isLoading) return;
     const userMsg: Message = { id: Date.now().toString(), role: "user", content: input };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setIsLoading(true);
-
-    setTimeout(() => {
-      const response = simulateResponse(input);
-      setMessages((prev) => [...prev, response]);
+    try {
+      const backendMsg = await queryBackend(subjectName, input);
+      const assistant: Message = {
+        id: Date.now().toString(),
+        role: "assistant",
+        content: backendMsg.content,
+        citations: backendMsg.citations,
+        confidence: backendMsg.confidence as any,
+        evidence: backendMsg.evidence,
+      };
+      setMessages((prev) => [...prev, assistant]);
+    } catch (err: any) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          role: "assistant",
+          content: "Error contacting backend: " + (err.message || err),
+        },
+      ]);
+    } finally {
       setIsLoading(false);
-    }, 1200);
+    }
+  };
+
+  // recording helpers
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      chunksRef.current = [];
+      mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      mr.onstop = sendVoiceMessage;
+      mr.start();
+      mediaRecorderRef.current = mr;
+      setRecording(true);
+    } catch (err) {
+      console.error("could not start recording", err);
+    }
+  };
+
+  const stopRecording = () => {
+    mediaRecorderRef.current?.stop();
+    setRecording(false);
+  };
+
+  const sendVoiceMessage = async () => {
+    if (chunksRef.current.length === 0) return;
+    const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+    const form = new FormData();
+    form.append("audio", blob, "voice.webm");
+    form.append("subject", subjectName);
+    setIsLoading(true);
+    try {
+      const token = localStorage.getItem("askynotes_token");
+      const headers: any = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      const res = await fetch("/voice", {
+        method: "POST",
+        body: form,
+        headers,
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        const msg = text || res.statusText;
+        toast({ title: `Voice error: ${msg}`, variant: "destructive" });
+        throw new Error(msg);
+      }
+
+      const transcript = res.headers.get("x-transcript") || "(voice)";
+      const userMsg: Message = { id: Date.now().toString(), role: "user", content: transcript };
+      setMessages((prev) => [...prev, userMsg]);
+
+      const responseText = res.headers.get("x-response") || "(voice response)";
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.startsWith("audio/")) {
+        const text = await res.text();
+        throw new Error(`unexpected content type: ${contentType} ${text}`);
+      }
+      const audioBlob = await res.blob();
+      if (audioBlob.size === 0) {
+        throw new Error("empty audio response");
+      }
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      // when audio ends, if continuous mode is active, restart recording
+      audio.onended = () => {
+        if (continuous) {
+          setTimeout(() => startRecording(), 200);
+        }
+      };
+      audio.play().catch((playErr) => {
+        console.error("audio play failed", playErr);
+        if (continuous) setTimeout(() => startRecording(), 200);
+      });
+
+      const assistant: Message = {
+        id: Date.now().toString(),
+        role: "assistant",
+        content: responseText,
+      };
+      setMessages((prev) => [...prev, assistant]);
+    } catch (err: any) {
+      console.error(err);
+      setMessages((prev) => [
+        ...prev,
+        { id: Date.now().toString(), role: "assistant", content: err.message || "Voice request failed" },
+      ]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -162,19 +270,36 @@ const ChatInterface = ({ subjectName, fileNames }: ChatInterfaceProps) => {
       <div className="p-4 border-t border-border">
         <form
           onSubmit={(e) => { e.preventDefault(); handleSend(); }}
-          className="flex gap-2"
+          className="flex gap-2 items-center"
         >
+          <Button
+            type="button"
+            size="icon"
+            onClick={() => {
+              if (continuous) {
+                setContinuous(false);
+                stopRecording();
+              } else {
+                setContinuous(true);
+                startRecording();
+              }
+            }}
+            className={`bg-secondary/50 text-primary hover:bg-secondary/60 flex-shrink-0 ${continuous ? "text-destructive" : ""}`}
+            disabled={isLoading}
+          >
+            {continuous ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+          </Button>
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder={`Ask about ${subjectName}...`}
             className="bg-secondary/50 border-border"
-            disabled={isLoading}
+            disabled={isLoading || continuous || recording}
           />
           <Button
             type="submit"
             size="icon"
-            disabled={!input.trim() || isLoading}
+            disabled={!input.trim() || isLoading || recording || continuous}
             className="bg-primary text-primary-foreground hover:bg-primary/90 flex-shrink-0"
           >
             <Send className="w-4 h-4" />

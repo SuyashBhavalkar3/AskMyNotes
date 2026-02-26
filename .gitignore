@@ -3,5 +3,8 @@ neossis_env
 *.db
 noessis.db
 backend/noessis.db
+frontend/.env
 # document uploads
 uploaded_docs
+.env
+**/.env

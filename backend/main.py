@@ -1,7 +1,9 @@
-"""Main FastAPI application entry point."""
+"""Main FastAPI application entry point with environment-aware configuration."""
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import os
+from typing import List
 
 # Import database initialization
 from database import init_db
@@ -18,6 +20,14 @@ from doc_chunk_store import router as doc_router
 # Initialize database tables (after routers are imported so their models are registered)
 init_db()
 
+# Read environment configuration
+# API_PREFIX: base path for all API endpoints (defaults to /api)
+API_PREFIX = os.getenv("API_PREFIX", "/api")
+
+# FRONTEND_ORIGINS: comma-separated list of allowed origins for CORS in development
+_origins = os.getenv("FRONTEND_ORIGINS", "http://localhost:8080")
+ALLOW_ORIGINS: List[str] = [o.strip() for o in _origins.split(",") if o.strip()]
+
 # Create FastAPI app
 app = FastAPI(
     title="AskMyNotes API",
@@ -28,17 +38,19 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure this for production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(auth_router)
-app.include_router(profile_router)
-app.include_router(doc_router)
+# Include routers under a common API prefix so frontend can target e.g. /api/auth
+app.include_router(auth_router, prefix=API_PREFIX)
+app.include_router(profile_router, prefix=API_PREFIX)
+app.include_router(doc_router, prefix=API_PREFIX)
+
 from doc_chunk_store.qdrant_client import qdrant_client
+
 
 @app.on_event("startup")
 def startup():
@@ -46,21 +58,21 @@ def startup():
     qdrant_client.ensure_collection(vector_size=1536)
 
 
-@app.get("/", tags=["health"])
+@app.get(f"{API_PREFIX}", tags=["health"])
 async def root():
-    """Health check endpoint."""
+    """Health check endpoint at the API base path."""
     return {
         "message": "AskMyNotes API is running",
         "version": "1.0.0",
         "auth_endpoints": {
-            "register": "POST /auth/register",
-            "login": "POST /auth/login",
-            "me": "GET /auth/me"
+            "register": f"POST {API_PREFIX}/auth/register",
+            "login": f"POST {API_PREFIX}/auth/login",
+            "me": f"GET {API_PREFIX}/auth/me"
         }
     }
 
 
-@app.get("/health", tags=["health"])
+@app.get(f"{API_PREFIX}/health", tags=["health"])
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
@@ -71,6 +83,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=int(os.getenv("PORT", "8000")),
         reload=True
     )

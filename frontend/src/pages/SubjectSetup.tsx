@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { BookOpen, Upload, FileText, X, ArrowRight, LogOut } from "lucide-react";
+import ThemeToggle from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +17,20 @@ export interface Subject {
 const SubjectSetup = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
+
+  // if subjects already stored, skip setup
+  useEffect(() => {
+    const stored = localStorage.getItem("askynotes_subjects");
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length === 3 && parsed.every((s: any) => s.name)) {
+          navigate("/study");
+        }
+      } catch {}
+    }
+  }, [navigate]);
+
   const [subjects, setSubjects] = useState<Subject[]>([
     { id: "1", name: "", files: [] },
     { id: "2", name: "", files: [] },
@@ -48,9 +63,9 @@ const SubjectSetup = () => {
   };
 
   const handleProceed = () => {
-    const allValid = subjects.every((s) => s.name.trim() && s.files.length > 0);
+    const allValid = subjects.every((s) => s.name.trim());
     if (!allValid) {
-      toast({ title: "Each subject needs a name and at least one file", variant: "destructive" });
+      toast({ title: "Each subject needs a name", variant: "destructive" });
       return;
     }
     // Save subjects metadata to localStorage (files stay in memory for demo)
@@ -71,8 +86,9 @@ const SubjectSetup = () => {
             <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
               <BookOpen className="w-4 h-4 text-primary" />
             </div>
-            <span className="font-display font-bold text-lg gradient-text">AskMyNotes</span>
+            <span className="font-display font-bold text-lg text-primary">AskMyNotes</span>
           </div>
+          <ThemeToggle />
           <Button
             variant="ghost"
             size="sm"
@@ -88,7 +104,7 @@ const SubjectSetup = () => {
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
           <h1 className="text-3xl font-display font-bold mb-2">Set Up Your Subjects</h1>
           <p className="text-muted-foreground mb-10">
-            Create exactly 3 subjects and upload your notes (PDF/TXT) for each.
+            Create exactly 3 subjects. Uploading notes is optional — you can add documents later from the dashboard.
           </p>
         </motion.div>
 

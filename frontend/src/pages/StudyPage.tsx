@@ -1,28 +1,85 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { BookOpen, LogOut } from "lucide-react";
+import ThemeToggle from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import SubjectCard from "@/components/SubjectCard";
 import ChatInterface from "@/components/ChatInterface";
 import StudyMode from "@/components/StudyMode";
+import { useToast } from "@/hooks/use-toast";
+import { postForm } from "@/lib/api";
 
 const StudyPage = () => {
   const navigate = useNavigate();
   const stored = localStorage.getItem("askynotes_subjects");
-  const subjects: { id: string; name: string; fileNames: string[] }[] = stored
-    ? JSON.parse(stored)
-    : [];
+  const [subjects, setSubjects] = useState<{ id: string; name: string; fileNames: string[] }[]>(
+    stored ? JSON.parse(stored) : []
+  );
 
   const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"chat" | "study">("chat");
 
   const selected = subjects.find((s) => s.id === selectedSubject);
+  const { toast } = useToast();
 
-  if (subjects.length === 0) {
-    navigate("/subjects");
-    return null;
-  }
+  const refreshSubjects = (updated: typeof subjects) => {
+    localStorage.setItem("askynotes_subjects", JSON.stringify(updated));
+    setSubjects(updated);
+  };
+
+  // if no subjects are stored, redirect once to setup page instead of rendering
+  useEffect(() => {
+    if (subjects.length === 0) {
+      navigate("/subjects");
+    }
+  }, [subjects, navigate]);
+
+  const [busyIds, setBusyIds] = useState<string[]>([]);
+  const setBusy = (id: string, value: boolean) => {
+    setBusyIds((prev) => {
+      if (value) return prev.includes(id) ? prev : [...prev, id];
+      return prev.filter((x) => x !== id);
+    });
+  };
+
+  const handleFiles = async (subjectId: string, files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setBusy(subjectId, true);
+    const token = localStorage.getItem("askynotes_token");
+    if (!token) {
+      toast({ title: "Please sign in to upload files", variant: "destructive" });
+      setBusy(subjectId, false);
+      return;
+    }
+    const subj = subjects.find((s) => s.id === subjectId);
+    if (!subj) {
+      setBusy(subjectId, false);
+      return;
+    }
+    for (const f of Array.from(files)) {
+      if (f.type !== "application/pdf" && f.type !== "text/plain") {
+        toast({ title: `${f.name} is not a supported file type`, variant: "destructive" });
+        continue;
+      }
+      const form = new FormData();
+      form.append("subject", subj.name);
+      form.append("file", f, f.name);
+      try {
+        await postForm("/doc/upload", form, token);
+        // update localStorage fileNames
+        const updated = subjects.map((s) =>
+          s.id === subjectId ? { ...s, fileNames: [...s.fileNames, f.name] } : s
+        );
+        refreshSubjects(updated);
+        toast({ title: `${f.name} uploaded` });
+      } catch (err: any) {
+        toast({ title: err.message || `Upload failed for ${f.name}`, variant: "destructive" });
+      }
+    }
+    setBusy(subjectId, false);
+  };
+
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -33,8 +90,9 @@ const StudyPage = () => {
             <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
               <BookOpen className="w-4 h-4 text-primary" />
             </div>
-            <span className="font-display font-bold text-lg gradient-text">AskMyNotes</span>
+            <span className="font-display font-bold text-lg text-primary">AskMyNotes</span>
           </div>
+          <ThemeToggle />
           <Button
             variant="ghost"
             size="sm"
@@ -58,6 +116,8 @@ const StudyPage = () => {
                   subject={subject}
                   index={i}
                   onClick={() => setSelectedSubject(subject.id)}
+                  onUpload={handleFiles}
+                  busy={busyIds.includes(subject.id)}
                 />
               ))}
             </div>

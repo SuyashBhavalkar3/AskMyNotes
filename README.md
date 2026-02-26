@@ -83,3 +83,42 @@ configured with the ``LLM_MODEL`` environment variable; it defaults to
 > The legacy `QDRANT_HOST`/`QDRANT_PORT` settings remain supported for simple
 > local deployments. If the application cannot connect to Qdrant, upload/query
 > calls will return a 503 Service Unavailable with an explanatory message. 
+
+**Integration & Local Development**
+
+- **Backend base path:** The API is mounted under `/api` by default. Example auth endpoints are available at `/api/auth/register`, `/api/auth/login` and `/api/auth/me`.
+- **CORS:** The backend reads `FRONTEND_ORIGINS` (comma-separated) to allow origins. By default it allows `http://localhost:8080` for local frontend development.
+- **Frontend:** The frontend reads `VITE_API_BASE` and `VITE_API_URL` from environment files. Development env is in `frontend/.env.development` (defaults to `VITE_API_BASE=/api` and `VITE_API_URL=http://localhost:8000`). Vite is configured to proxy `/api` to the backend during `npm run dev`.
+- **One-step dev (Windows):** Run `dev.cmd` from the repository root to open two terminal windows — one for the backend (activates `neossis_env`) and one for the frontend. You can alternatively run the services manually:
+
+```powershell
+# Backend (from repository root)
+neossis_env\Scripts\activate  # activate your venv on Windows
+pip install -r backend/requirements.txt
+cd backend
+uvicorn main:app --reload --port 8000
+
+# Frontend (new terminal)
+cd frontend
+npm install
+npm run dev
+```
+
+- **Health check:** Backend health endpoint is available at `http://localhost:8000/api/health`.
+
+- **Chat requests:** When using the chat interface on any subject card, the frontend sends a POST to `http://localhost:8000/api/doc/query` with
+  ```json
+  { "subject": "<subject name>", "question": "<user query>", "top_k": 5 }
+  ```
+  The request includes the JWT token from `askynotes_token` in the Authorization header; responses are displayed with citations and are stored in the chat history. Ensure your backend is running and the token is valid to receive answers.
+
+- **Theme:** A light/dark toggle exists in the navbar. It uses `next-themes` and persists your preference. The UI supports both modes via Tailwind `dark` class and CSS token overrides.
+- **Visuals:** Gradients have been removed in favor of solid colors; the application no longer uses the `gradient-text` or `gradient-border` utility classes. The home/dashboard page spacing has been tightened to make the layout denser and less empty.
+
+- **Voice agent:** A lightweight Node/Express service provides speech‑to‑text, question answering (via the main Python backend), and text‑to‑speech. The service lives in `backend/server.js` and runs on port `5001` by default. To start it you'll need a valid `OPENAI_API_KEY` (for Whisper/tts) and optionally `PYTHON_API_BASE` if your FastAPI server is running on a different host. Use `npm install` inside `backend/` and `npm run dev` during development. 
+
+  **Troubleshooting:** ensure the voice server is running before opening the frontend. The Vite dev server proxies `/voice` requests to `VITE_VOICE_URL` (default `http://localhost:5001`). If the backend is down you will see proxy errors and a 500 response; the frontend now shows a toast explaining the service is unreachable. Do **not** start the voice backend on port 8080 (that port is reserved for the Vite dev server). A `PORT` environment variable allows you to change the voice service port if needed.
+
+  The chat interface on study pages includes a microphone button — press it to record, stop to send, then hear a spoken reply. Transcripts are shown in the UI and all audio is streamed via the `/voice` proxy.
+
+- **Production:** In production set `FRONTEND_ORIGINS` to your frontend origin(s) and set `VITE_API_URL` to the production API URL. Ensure you serve the frontend built assets from a static host and point the API URL accordingly.

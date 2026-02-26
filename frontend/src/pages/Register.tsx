@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { postJSON } from "@/lib/api";
 
 const Register = () => {
   const [name, setName] = useState("");
@@ -15,15 +16,20 @@ const Register = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name || !email || !password) {
       toast({ title: "Please fill all fields", variant: "destructive" });
       return;
     }
-    localStorage.setItem("askmynotes_user", JSON.stringify({ name, email }));
-    toast({ title: "Account created!" });
-    navigate("/dashboard");
+    try {
+      const data = await postJSON("/auth/register", { name, email, password });
+      // registration returns user info; redirect to login
+      toast({ title: "Account created! Please sign in." });
+      navigate("/login");
+    } catch (err: any) {
+      toast({ title: err.message || "Registration failed", variant: "destructive" });
+    }
   };
 
   return (
@@ -39,7 +45,7 @@ const Register = () => {
             <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center glow-primary">
               <BookOpen className="w-5 h-5 text-primary" />
             </div>
-            <h1 className="text-2xl font-display font-bold gradient-text">AskMyNotes</h1>
+            <h1 className="text-2xl font-display font-bold text-primary">AskMyNotes</h1>
           </div>
           <p className="text-muted-foreground">Create your study copilot account</p>
         </div>
