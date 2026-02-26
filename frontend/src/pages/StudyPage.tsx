@@ -9,13 +9,12 @@ import ChatInterface from "@/components/ChatInterface";
 import StudyMode from "@/components/StudyMode";
 import { useToast } from "@/hooks/use-toast";
 import { postForm } from "@/lib/api";
+import { loadSubjects, saveSubjects } from "@/lib/subjects";
 
 const StudyPage = () => {
   const navigate = useNavigate();
-  const stored = localStorage.getItem("askynotes_subjects");
-  const [subjects, setSubjects] = useState<{ id: string; name: string; fileNames: string[] }[]>(
-    stored ? JSON.parse(stored) : []
-  );
+  const stored = loadSubjects();
+  const [subjects, setSubjects] = useState<{ id: string; name: string; fileNames: string[] }[]>(stored || []);
 
   const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"chat" | "study">("chat");
@@ -24,16 +23,24 @@ const StudyPage = () => {
   const { toast } = useToast();
 
   const refreshSubjects = (updated: typeof subjects) => {
-    localStorage.setItem("askynotes_subjects", JSON.stringify(updated));
+    saveSubjects(updated);
     setSubjects(updated);
   };
 
-  // if no subjects are stored, redirect once to setup page instead of rendering
-  useEffect(() => {
-    if (subjects.length === 0) {
-      navigate("/subjects");
+  // allow first-time users to add a subject inline instead of forcing a redirect
+  const [newSubjectName, setNewSubjectName] = useState("");
+  const addSubject = (name?: string) => {
+    const n = (name ?? newSubjectName).trim();
+    if (!n) {
+      toast({ title: "Please enter a subject name", variant: "destructive" });
+      return;
     }
-  }, [subjects, navigate]);
+    const newSub = { id: Date.now().toString(), name: n, fileNames: [] };
+    const updated = [...subjects, newSub];
+    refreshSubjects(updated);
+    setNewSubjectName("");
+    setSelectedSubject(newSub.id);
+  };
 
   const [busyIds, setBusyIds] = useState<string[]>([]);
   const setBusy = (id: string, value: boolean) => {
@@ -105,24 +112,7 @@ const StudyPage = () => {
       </nav>
 
       <div className="flex-1 max-w-7xl mx-auto w-full px-6 py-8">
-        {!selectedSubject ? (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-            <h1 className="text-3xl font-display font-bold mb-2">Your Subjects</h1>
-            <p className="text-muted-foreground mb-8">Select a subject to start studying</p>
-            <div className="grid md:grid-cols-3 gap-6">
-              {subjects.map((subject, i) => (
-                <SubjectCard
-                  key={subject.id}
-                  subject={subject}
-                  index={i}
-                  onClick={() => setSelectedSubject(subject.id)}
-                  onUpload={handleFiles}
-                  busy={busyIds.includes(subject.id)}
-                />
-              ))}
-            </div>
-          </motion.div>
-        ) : (
+        {selectedSubject ? (
           <div className="flex flex-col h-[calc(100vh-8rem)]">
             {/* Subject Header */}
             <div className="flex items-center justify-between mb-4">
@@ -191,6 +181,40 @@ const StudyPage = () => {
               )}
             </AnimatePresence>
           </div>
+        ) : subjects.length === 0 ? (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center py-20">
+            <h1 className="text-3xl font-display font-bold mb-2">Welcome — Add a Subject</h1>
+            <p className="text-muted-foreground mb-6">It looks like you don't have any subjects yet. Add one to get started.</p>
+            <div className="max-w-md mx-auto flex gap-2">
+              <input
+                className="flex-1 px-3 py-2 rounded-md bg-secondary/50 border-border"
+                placeholder="e.g. Biology"
+                value={newSubjectName}
+                onChange={(e) => setNewSubjectName(e.target.value)}
+              />
+              <Button onClick={() => addSubject()} disabled={!newSubjectName.trim()}>Add</Button>
+            </div>
+            <div className="mt-4">
+              <Button variant="ghost" onClick={() => navigate('/subjects')}>Open full setup</Button>
+            </div>
+          </motion.div>
+        ) : (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+            <h1 className="text-3xl font-display font-bold mb-2">Your Subjects</h1>
+            <p className="text-muted-foreground mb-8">Select a subject to start studying</p>
+            <div className="grid md:grid-cols-3 gap-6">
+              {subjects.map((subject, i) => (
+                <SubjectCard
+                  key={subject.id}
+                  subject={subject}
+                  index={i}
+                  onClick={() => setSelectedSubject(subject.id)}
+                  onUpload={handleFiles}
+                  busy={busyIds.includes(subject.id)}
+                />
+              ))}
+            </div>
+          </motion.div>
         )}
       </div>
     </div>

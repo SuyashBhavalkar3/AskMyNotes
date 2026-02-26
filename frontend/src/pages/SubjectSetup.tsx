@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { loadSubjects, saveSubjects } from "@/lib/subjects";
 
 export interface Subject {
   id: string;
@@ -20,14 +21,9 @@ const SubjectSetup = () => {
 
   // if subjects already stored, skip setup
   useEffect(() => {
-    const stored = localStorage.getItem("askynotes_subjects");
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length === 3 && parsed.every((s: any) => s.name)) {
-          navigate("/study");
-        }
-      } catch {}
+    const stored = loadSubjects();
+    if (stored && Array.isArray(stored) && stored.length === 3 && stored.every((s: any) => s.name)) {
+      navigate("/study");
     }
   }, [navigate]);
 
@@ -68,13 +64,13 @@ const SubjectSetup = () => {
       toast({ title: "Each subject needs a name", variant: "destructive" });
       return;
     }
-    // Save subjects metadata to localStorage (files stay in memory for demo)
+    // Save subjects metadata (files stay in memory for demo). Only persists when user signed in.
     const metadata = subjects.map((s) => ({
       id: s.id,
       name: s.name,
       fileNames: s.files.map((f) => f.name),
     }));
-    localStorage.setItem("askynotes_subjects", JSON.stringify(metadata));
+    saveSubjects(metadata);
     navigate("/study");
   };
 

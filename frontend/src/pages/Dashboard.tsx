@@ -6,6 +6,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { postForm } from "@/lib/api";
+import { loadSubjects, saveSubjects } from "@/lib/subjects";
 
 const features = [
   {
@@ -31,12 +32,12 @@ const Dashboard = () => {
   const { toast } = useToast();
 
   const [subjects, setSubjects] = useState<{ id: string; name: string; fileNames: string[] }[]>(() => {
-    const stored = localStorage.getItem("askynotes_subjects");
-    return stored ? JSON.parse(stored) : [];
+    const stored = loadSubjects();
+    return stored || [];
   });
 
   const refreshSubjects = (updated: typeof subjects) => {
-    localStorage.setItem("askynotes_subjects", JSON.stringify(updated));
+    saveSubjects(updated);
     setSubjects(updated);
   };
 
